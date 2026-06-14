@@ -26,3 +26,17 @@ def trust_region_constraints(
         interior - current_interior <= radius,
         current_interior - interior <= radius,
     ]
+
+
+def max_step_constraints(
+    trajectory_var: cp.Variable,
+    max_step: float | None,
+) -> list[cp.Constraint]:
+    if max_step is None or max_step <= 0.0:
+        return []
+
+    deltas = trajectory_var[1:] - trajectory_var[:-1]
+    return [
+        deltas <= max_step,
+        -deltas <= max_step,
+    ]

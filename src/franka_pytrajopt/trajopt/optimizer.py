@@ -7,9 +7,13 @@ import cvxpy as cp
 import numpy as np
 
 from franka_pytrajopt.logging.logger import ResultLogger
-from franka_pytrajopt.trajopt.constraints import fixed_endpoint_constraints, trust_region_constraints
+from franka_pytrajopt.trajopt.constraints import (
+    fixed_endpoint_constraints,
+    max_step_constraints,
+    trust_region_constraints,
+)
 from franka_pytrajopt.trajopt.costs import smoothness_cost, smoothness_cost_expr
-from franka_pytrajopt.trajopt.linearization import linearize_signed_distance
+from franka_pytrajopt.trajopt.linearization import CollisionSample, linearize_signed_distance
 from franka_pytrajopt.trajopt.problem import Point2DConfig
 from franka_pytrajopt.world.box2d import AxisAlignedBox2D
 
@@ -41,12 +45,45 @@ class TrajOptOptimizer:
         if config.num_waypoints < 2:
             raise ValueError("At least two waypoints are required.")
 
+    @property
+    def segment_alphas(self) -> list[float]:
+        return [float(alpha) for alpha in self.config.optimizer.segment_collision_alphas]
+
     def seed_trajectory(self) -> np.ndarray:
         alphas = np.linspace(0.0, 1.0, self.config.num_waypoints)
-        return (1.0 - alphas[:, None]) * self.config.start + alphas[:, None] * self.config.goal
+        straight_line = (1.0 - alphas[:, None]) * self.config.start + alphas[:, None] * self.config.goal
+        if not self.obstacle.segment_intersects(self.config.start, self.config.goal):
+            return straight_line
+
+        direction = self.config.goal - self.config.start
+        direction_norm = float(np.linalg.norm(direction))
+        if direction_norm <= 1.0e-12:
+            return straight_line
+
+        unit_direction = direction / direction_norm
+        unit_normal = np.array([-unit_direction[1], unit_direction[0]], dtype=float)
+        if np.linalg.norm(unit_normal) <= 1.0e-12:
+            return straight_line
+
+        sign = 1.0 if self.config.start[1] <= self.obstacle.center_array[1] else -1.0
+        bump_amplitude = self.obstacle.half_extents[1] + self.config.optimizer.collision_margin + 0.5
+        bump_profile = 4.0 * alphas * (1.0 - alphas)
+        detour = sign * bump_profile[:, None] * bump_amplitude * unit_normal
+        return straight_line + detour
+
+    def sample_collision_distances(self, trajectory: np.ndarray) -> np.ndarray:
+        linearization = linearize_signed_distance(trajectory, self.obstacle, self.segment_alphas)
+        return np.asarray([sample.distance for sample in linearization.all_samples], dtype=float)
+
+    def sample_point_expr(self, trajectory_var: cp.Expression, sample: CollisionSample) -> cp.Expression:
+        if sample.right_index is None:
+            return trajectory_var[sample.left_index]
+
+        assert sample.alpha is not None
+        return (1.0 - sample.alpha) * trajectory_var[sample.left_index] + sample.alpha * trajectory_var[sample.right_index]
 
     def evaluate_true_metrics(self, trajectory: np.ndarray, penalty_coeff: float) -> dict[str, float]:
-        distances = np.asarray([self.obstacle.signed_distance(point) for point in trajectory], dtype=float)
+        distances = self.sample_collision_distances(trajectory)
         smooth = smoothness_cost(trajectory)
         margin = self.config.optimizer.collision_margin
         hinge = np.maximum(0.0, margin - distances)
@@ -68,13 +105,14 @@ class TrajOptOptimizer:
         current: np.ndarray,
         penalty_coeff: float,
     ) -> dict[str, float]:
-        linearization = linearize_signed_distance(current, self.obstacle)
+        linearization = linearize_signed_distance(current, self.obstacle, self.segment_alphas)
         smooth = smoothness_cost(candidate)
         affine_distances = []
-        for idx in range(self.config.num_waypoints):
-            affine_distance = linearization.distances[idx] + float(
-                linearization.gradients[idx] @ (candidate[idx] - current[idx])
+        for sample in linearization.all_samples:
+            sample_point = candidate[sample.left_index] if sample.right_index is None else (
+                (1.0 - sample.alpha) * candidate[sample.left_index] + sample.alpha * candidate[sample.right_index]
             )
+            affine_distance = sample.distance + float(sample.gradient @ (sample_point - sample.point))
             affine_distances.append(affine_distance)
 
         affine_distances_arr = np.asarray(affine_distances, dtype=float)
@@ -99,7 +137,7 @@ class TrajOptOptimizer:
         dim = self.config.dimensions
         opt_cfg = self.config.optimizer
 
-        linearization = linearize_signed_distance(current, self.obstacle)
+        linearization = linearize_signed_distance(current, self.obstacle, self.segment_alphas)
         trajectory_var = cp.Variable((num_waypoints, dim))
 
         objective_terms = [
@@ -107,14 +145,16 @@ class TrajOptOptimizer:
         ]
 
         collision_terms = []
-        for idx in range(num_waypoints):
-            affine_sdf = linearization.distances[idx] + linearization.gradients[idx] @ (trajectory_var[idx] - current[idx])
+        for sample in linearization.all_samples:
+            sample_var = self.sample_point_expr(trajectory_var, sample)
+            affine_sdf = sample.distance + sample.gradient @ (sample_var - sample.point)
             collision_terms.append(cp.pos(opt_cfg.collision_margin - affine_sdf))
         objective_terms.append(penalty_coeff * cp.sum(cp.hstack(collision_terms)))
 
         constraints = []
         constraints.extend(fixed_endpoint_constraints(trajectory_var, self.config.start, self.config.goal))
         constraints.extend(trust_region_constraints(trajectory_var, current, trust_region_radius))
+        constraints.extend(max_step_constraints(trajectory_var, opt_cfg.max_step))
 
         problem = cp.Problem(cp.Minimize(cp.sum(objective_terms)), constraints)
         problem.solve(solver=getattr(cp, opt_cfg.solver), warm_start=True)

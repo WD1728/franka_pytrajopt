@@ -15,6 +15,12 @@ class ResultLogger:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.iteration_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_path = self.output_dir / "metrics.csv"
+
+        if self.metrics_path.exists():
+            self.metrics_path.unlink()
+        for old_iteration_csv in self.iteration_dir.glob("iter_*.csv"):
+            old_iteration_csv.unlink()
+
         self._metrics_header_written = False
 
     def save_config(self, config: dict) -> None:

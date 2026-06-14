@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import matplotlib.patches as patches
 import numpy as np
 
 
@@ -35,6 +34,10 @@ class AxisAlignedBox2D:
         sdf, _ = self.signed_distance_with_gradient(point)
         return float(sdf)
 
+    def contains_point(self, point: np.ndarray, atol: float = 1.0e-12) -> bool:
+        point = np.asarray(point, dtype=float)
+        return bool(np.all(point >= (self.min_corner - atol)) and np.all(point <= (self.max_corner + atol)))
+
     def signed_distance_with_gradient(self, point: np.ndarray) -> tuple[float, np.ndarray]:
         point = np.asarray(point, dtype=float)
         q = point - self.center_array
@@ -58,7 +61,39 @@ class AxisAlignedBox2D:
         grad[axis] = sign if sign != 0.0 else 1.0
         return float(sdf), grad
 
+    def segment_intersects(self, start: np.ndarray, end: np.ndarray, atol: float = 1.0e-12) -> bool:
+        start = np.asarray(start, dtype=float)
+        end = np.asarray(end, dtype=float)
+
+        if self.contains_point(start, atol=atol) or self.contains_point(end, atol=atol):
+            return True
+
+        direction = end - start
+        t_min = 0.0
+        t_max = 1.0
+
+        for axis in range(2):
+            if abs(direction[axis]) <= atol:
+                if start[axis] < self.min_corner[axis] - atol or start[axis] > self.max_corner[axis] + atol:
+                    return False
+                continue
+
+            inv_dir = 1.0 / direction[axis]
+            t0 = (self.min_corner[axis] - start[axis]) * inv_dir
+            t1 = (self.max_corner[axis] - start[axis]) * inv_dir
+            if t0 > t1:
+                t0, t1 = t1, t0
+
+            t_min = max(t_min, t0)
+            t_max = min(t_max, t1)
+            if t_min > t_max:
+                return False
+
+        return t_max >= 0.0 and t_min <= 1.0
+
     def plot(self, ax, **kwargs) -> None:
+        import matplotlib.patches as patches
+
         min_corner = self.min_corner
         rect = patches.Rectangle(
             (min_corner[0], min_corner[1]),

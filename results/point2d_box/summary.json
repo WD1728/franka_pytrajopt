@@ -1,9 +1,9 @@
 {
   "status": "converged_constraint_tolerance",
-  "iterations": 2,
-  "final_objective": 9.21875,
-  "final_min_signed_distance": 0.25,
+  "iterations": 1,
+  "final_objective": 5.785293499682512,
+  "final_min_signed_distance": 0.2588478537722425,
   "final_max_penetration_depth": 0.0,
-  "final_smoothness_cost": 9.21875,
-  "final_trajectory_csv": "results/point2d_box/iterations/iter_002.csv"
+  "final_smoothness_cost": 5.785293499682512,
+  "final_trajectory_csv": "results/point2d_box/iterations/iter_001.csv"
 }

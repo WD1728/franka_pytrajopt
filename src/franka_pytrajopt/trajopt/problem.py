@@ -16,6 +16,7 @@ class OptimizerConfig:
     smoothness_weight: float
     collision_weight: float
     collision_margin: float
+    segment_collision_alphas: list[float]
     trust_region_radius: float
     min_trust_region_radius: float
     trust_shrink_ratio: float
@@ -27,6 +28,7 @@ class OptimizerConfig:
     max_iterations: int
     min_approx_improve: float
     min_approx_improve_frac: float
+    max_step: float | None = None
     solver: str = "OSQP"
 
 
