@@ -1,0 +1,32 @@
+problem:
+  num_waypoints: 21
+  dimensions: 2
+  start:
+  - 0.0
+  - 0.0
+  goal:
+  - 10.0
+  - 0.0
+obstacle:
+  center:
+  - 5.0
+  - 0.0
+  size:
+  - 2.0
+  - 3.0
+optimizer:
+  smoothness_weight: 1.0
+  collision_weight: 25.0
+  collision_margin: 0.25
+  trust_region_radius: 0.75
+  min_trust_region_radius: 0.01
+  trust_shrink_ratio: 0.5
+  trust_expand_ratio: 1.5
+  improve_ratio_threshold: 0.25
+  max_merit_coeff_increases: 4
+  merit_coeff_increase_ratio: 10.0
+  constraint_tolerance: 0.001
+  max_iterations: 25
+  min_approx_improve: 1.0e-05
+  min_approx_improve_frac: 1.0e-06
+  solver: OSQP

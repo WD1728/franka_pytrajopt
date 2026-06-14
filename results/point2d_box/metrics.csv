@@ -1,0 +1,4 @@
+iteration,penalty_iteration,objective,approx_merit,exact_merit,approx_improve,exact_improve,merit_improve_ratio,smoothness_cost,min_signed_distance,max_penetration_depth,collision_penalty,constraint_violation,step_norm,trust_region_radius,penalty_coeff,accepted,subproblem_status
+0,0,86.24999999999997,86.24999999999997,86.24999999999997,0.0,0.0,0.0,5.0,-1.0,1.0,81.24999999999997,3.249999999999999,0.0,0.75,25.0,1,seed
+1,0,19.875,19.875,19.875,66.37499999999997,66.37499999999997,1.0,7.375,-0.25,0.25,12.5,0.5,0.75,0.75,25.0,1,optimal
+2,1,9.21875,9.21875,9.21875,123.15625,123.15625,1.0,9.21875,0.25,0.0,0.0,0.0,0.5,1.125,250.0,1,optimal
