@@ -34,4 +34,6 @@ optimizer:
   min_approx_improve: 1.0e-05
   min_approx_improve_frac: 1.0e-06
   max_step: 0.75
+  seed_type: offset_straight
+  seed_y_offset: 0.75
   solver: OSQP

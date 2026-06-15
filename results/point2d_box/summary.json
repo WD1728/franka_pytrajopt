@@ -1,9 +1,12 @@
 {
   "status": "converged_constraint_tolerance",
-  "iterations": 1,
-  "final_objective": 5.785293499682512,
-  "final_min_signed_distance": 0.2588478537722425,
-  "final_max_penetration_depth": 0.0,
-  "final_smoothness_cost": 5.785293499682512,
-  "final_trajectory_csv": "results/point2d_box/iterations/iter_001.csv"
+  "iterations": 3,
+  "final_objective": 5.892836302263488,
+  "final_sampled_min_signed_distance": 0.30189782070270077,
+  "final_sampled_max_penetration_depth": 0.0,
+  "final_sampled_collision_penalty": 0.0,
+  "final_smoothness_cost": 5.892836302263488,
+  "final_has_segment_collision": false,
+  "final_colliding_segments": [],
+  "final_trajectory_csv": "results/point2d_box/iterations/iter_003.csv"
 }

@@ -47,9 +47,12 @@ def main() -> None:
         "status": result.status,
         "iterations": result.iterations,
         "final_objective": result.final_objective,
-        "final_min_signed_distance": result.final_min_signed_distance,
-        "final_max_penetration_depth": result.final_max_penetration_depth,
+        "final_sampled_min_signed_distance": result.final_sampled_min_signed_distance,
+        "final_sampled_max_penetration_depth": result.final_sampled_max_penetration_depth,
+        "final_sampled_collision_penalty": result.final_sampled_collision_penalty,
         "final_smoothness_cost": result.final_smoothness_cost,
+        "final_has_segment_collision": result.final_has_segment_collision,
+        "final_colliding_segments": result.final_colliding_segments,
         "final_trajectory_csv": str(result.final_trajectory_csv),
     }
     logger.save_summary(summary)

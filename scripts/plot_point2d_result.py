@@ -77,16 +77,16 @@ def plot_result(result_dir: Path) -> Path:
     obstacle.plot(ax=ax, facecolor="lightcoral", edgecolor="darkred", alpha=0.4)
 
     seed_name, seed_traj = trajectories[0]
-    plot_trajectory(ax, obstacle, seed_traj, seed_name, base_color="gray", linestyle="--", sample_alphas=segment_alphas)
+    plot_trajectory(ax, obstacle, seed_traj, seed_name, base_color="gray", linestyle="--")
 
     for name, traj in trajectories[1:-1]:
-        plot_trajectory(ax, obstacle, traj, name, base_color="tab:orange", linestyle="-", sample_alphas=segment_alphas, alpha=0.8)
+        plot_trajectory(ax, obstacle, traj, name, base_color="tab:orange", linestyle="-", alpha=0.8)
 
     final_name, final_traj = trajectories[-1]
-    plot_trajectory(ax, obstacle, final_traj, final_name, base_color="tab:blue", linestyle="-", sample_alphas=segment_alphas, draw_markers=True)
+    plot_trajectory(ax, obstacle, final_traj, final_name, base_color="tab:blue", linestyle="-", draw_markers=True)
     plot_segment_samples(ax, obstacle, final_traj, segment_alphas)
 
-    colliding_segments = count_colliding_segments(obstacle, final_traj)
+    colliding_segments = obstacle.segment_collision_indices(final_traj)
     min_sampled_sdf = compute_min_sampled_sdf(obstacle, final_traj, segment_alphas)
 
     ax.scatter(seed_traj[0, 0], seed_traj[0, 1], color="green", s=60, label="start")
@@ -119,13 +119,6 @@ def compute_min_sampled_sdf(
         for _, _, point in segment_sample_points(trajectory, sample_alphas)
     )
     return float(np.min(np.asarray(distances, dtype=float)))
-
-
-def count_colliding_segments(obstacle: AxisAlignedBox2D, trajectory: np.ndarray) -> int:
-    return sum(
-        int(obstacle.segment_intersects(trajectory[idx], trajectory[idx + 1]))
-        for idx in range(len(trajectory) - 1)
-    )
 
 
 def plot_segment_samples(
@@ -165,7 +158,6 @@ def plot_trajectory(
     label: str,
     base_color: str,
     linestyle: str,
-    sample_alphas: list[float],
     alpha: float = 1.0,
     draw_markers: bool = False,
 ) -> None:

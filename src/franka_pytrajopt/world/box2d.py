@@ -91,6 +91,13 @@ class AxisAlignedBox2D:
 
         return t_max >= 0.0 and t_min <= 1.0
 
+    def segment_collision_indices(self, trajectory: np.ndarray) -> list[int]:
+        return [
+            idx
+            for idx in range(len(trajectory) - 1)
+            if self.segment_intersects(trajectory[idx], trajectory[idx + 1])
+        ]
+
     def plot(self, ax, **kwargs) -> None:
         import matplotlib.patches as patches
 

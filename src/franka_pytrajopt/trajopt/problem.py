@@ -29,6 +29,8 @@ class OptimizerConfig:
     min_approx_improve: float
     min_approx_improve_frac: float
     max_step: float | None = None
+    seed_type: str = "offset_straight"
+    seed_y_offset: float = 0.1
     solver: str = "OSQP"
 
 
@@ -48,10 +50,15 @@ class Point2DConfig:
 
     @staticmethod
     def from_dict(data: dict) -> "Point2DConfig":
+        optimizer_data = dict(data["optimizer"])
+        optimizer_data.setdefault("segment_collision_alphas", [0.25, 0.5, 0.75])
+        optimizer_data.setdefault("max_step", None)
+        optimizer_data.setdefault("seed_type", "offset_straight")
+        optimizer_data.setdefault("seed_y_offset", 0.1)
         return Point2DConfig(
             problem=ProblemConfig(**data["problem"]),
             obstacle=ObstacleConfig(**data["obstacle"]),
-            optimizer=OptimizerConfig(**data["optimizer"]),
+            optimizer=OptimizerConfig(**optimizer_data),
         )
 
     def to_dict(self) -> dict:

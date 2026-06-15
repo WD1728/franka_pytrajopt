@@ -28,7 +28,7 @@ def trust_region_constraints(
     ]
 
 
-def max_step_constraints(
+def max_axis_step_constraints(
     trajectory_var: cp.Variable,
     max_step: float | None,
 ) -> list[cp.Constraint]:

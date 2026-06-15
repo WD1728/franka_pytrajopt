@@ -9,7 +9,7 @@ import numpy as np
 from franka_pytrajopt.logging.logger import ResultLogger
 from franka_pytrajopt.trajopt.constraints import (
     fixed_endpoint_constraints,
-    max_step_constraints,
+    max_axis_step_constraints,
     trust_region_constraints,
 )
 from franka_pytrajopt.trajopt.costs import smoothness_cost, smoothness_cost_expr
@@ -23,9 +23,12 @@ class OptimizationResult:
     status: str
     iterations: int
     final_objective: float
-    final_min_signed_distance: float
-    final_max_penetration_depth: float
+    final_sampled_min_signed_distance: float
+    final_sampled_max_penetration_depth: float
+    final_sampled_collision_penalty: float
     final_smoothness_cost: float
+    final_has_segment_collision: bool
+    final_colliding_segments: list[int]
     final_trajectory_csv: Path
 
 
@@ -52,28 +55,34 @@ class TrajOptOptimizer:
     def seed_trajectory(self) -> np.ndarray:
         alphas = np.linspace(0.0, 1.0, self.config.num_waypoints)
         straight_line = (1.0 - alphas[:, None]) * self.config.start + alphas[:, None] * self.config.goal
-        if not self.obstacle.segment_intersects(self.config.start, self.config.goal):
+        seed_type = self.config.optimizer.seed_type
+        seed_y_offset = float(self.config.optimizer.seed_y_offset)
+
+        if seed_type == "centered_straight":
             return straight_line
 
-        direction = self.config.goal - self.config.start
-        direction_norm = float(np.linalg.norm(direction))
-        if direction_norm <= 1.0e-12:
-            return straight_line
+        if seed_type == "offset_straight":
+            seeded = straight_line.copy()
+            seeded[:, 1] += seed_y_offset * np.sin(np.pi * alphas)
+            return seeded
 
-        unit_direction = direction / direction_norm
-        unit_normal = np.array([-unit_direction[1], unit_direction[0]], dtype=float)
-        if np.linalg.norm(unit_normal) <= 1.0e-12:
-            return straight_line
-
-        sign = 1.0 if self.config.start[1] <= self.obstacle.center_array[1] else -1.0
-        bump_amplitude = self.obstacle.half_extents[1] + self.config.optimizer.collision_margin + 0.5
         bump_profile = 4.0 * alphas * (1.0 - alphas)
-        detour = sign * bump_profile[:, None] * bump_amplitude * unit_normal
-        return straight_line + detour
+        bump_amplitude = self.obstacle.half_extents[1] + self.config.optimizer.collision_margin + 0.5
+        seeded = straight_line.copy()
+        if seed_type == "upper_detour":
+            seeded[:, 1] += bump_amplitude * bump_profile
+            return seeded
+        if seed_type == "lower_detour":
+            seeded[:, 1] -= bump_amplitude * bump_profile
+            return seeded
+        raise ValueError(f"Unsupported seed_type: {seed_type}")
 
     def sample_collision_distances(self, trajectory: np.ndarray) -> np.ndarray:
         linearization = linearize_signed_distance(trajectory, self.obstacle, self.segment_alphas)
         return np.asarray([sample.distance for sample in linearization.all_samples], dtype=float)
+
+    def segment_collision_indices(self, trajectory: np.ndarray) -> list[int]:
+        return self.obstacle.segment_collision_indices(trajectory)
 
     def sample_point_expr(self, trajectory_var: cp.Expression, sample: CollisionSample) -> cp.Expression:
         if sample.right_index is None:
@@ -90,13 +99,16 @@ class TrajOptOptimizer:
         total_violation = float(np.sum(hinge))
         collision_penalty = penalty_coeff * total_violation
         merit = self.config.optimizer.smoothness_weight * smooth + collision_penalty
+        colliding_segments = self.segment_collision_indices(trajectory)
         return {
             "objective": float(merit),
             "smoothness_cost": float(smooth),
-            "min_signed_distance": float(np.min(distances)),
-            "max_penetration_depth": float(np.max(np.maximum(0.0, -distances))),
-            "collision_penalty": float(collision_penalty),
+            "sampled_min_signed_distance": float(np.min(distances)),
+            "sampled_max_penetration_depth": float(np.max(np.maximum(0.0, -distances))),
+            "sampled_collision_penalty": float(collision_penalty),
             "constraint_violation": float(total_violation),
+            "has_segment_collision": bool(colliding_segments),
+            "colliding_segments": colliding_segments,
         }
 
     def evaluate_model_metrics(
@@ -123,7 +135,7 @@ class TrajOptOptimizer:
         return {
             "objective": float(merit),
             "smoothness_cost": float(smooth),
-            "collision_penalty": float(collision_penalty),
+            "sampled_collision_penalty": float(collision_penalty),
             "constraint_violation": float(total_violation),
         }
 
@@ -154,7 +166,7 @@ class TrajOptOptimizer:
         constraints = []
         constraints.extend(fixed_endpoint_constraints(trajectory_var, self.config.start, self.config.goal))
         constraints.extend(trust_region_constraints(trajectory_var, current, trust_region_radius))
-        constraints.extend(max_step_constraints(trajectory_var, opt_cfg.max_step))
+        constraints.extend(max_axis_step_constraints(trajectory_var, opt_cfg.max_step))
 
         problem = cp.Problem(cp.Minimize(cp.sum(objective_terms)), constraints)
         problem.solve(solver=getattr(cp, opt_cfg.solver), warm_start=True)
@@ -192,6 +204,7 @@ class TrajOptOptimizer:
             penalty_iteration=0,
         )
 
+        converged = False
         for penalty_iteration in range(opt_cfg.max_merit_coeff_increases):
             current_metrics = self.evaluate_true_metrics(current, penalty_coeff)
             converged_this_penalty = False
@@ -230,29 +243,44 @@ class TrajOptOptimizer:
                     penalty_iteration=penalty_iteration,
                 )
 
-                if approx_improve < opt_cfg.min_approx_improve:
-                    converged_this_penalty = True
-                    break
-
-                denom = max(abs(current_metrics["objective"]), 1.0e-12)
-                if (approx_improve / denom) < opt_cfg.min_approx_improve_frac:
-                    converged_this_penalty = True
-                    break
-
                 if accepted:
                     current = candidate
                     current_metrics = candidate_metrics
                     accepted_iteration = overall_iteration
                     trust_region_radius *= opt_cfg.trust_expand_ratio
-                    break
+
+                    if (
+                        current_metrics["constraint_violation"] <= opt_cfg.constraint_tolerance
+                        and not current_metrics["has_segment_collision"]
+                    ):
+                        status = "converged_constraint_tolerance"
+                        converged = True
+                        break
+
+                    if approx_improve < opt_cfg.min_approx_improve:
+                        converged_this_penalty = True
+                        break
+
+                    denom = max(abs(current_metrics["objective"]), 1.0e-12)
+                    if (approx_improve / denom) < opt_cfg.min_approx_improve_frac:
+                        converged_this_penalty = True
+                        break
+
+                    continue
 
                 trust_region_radius *= opt_cfg.trust_shrink_ratio
                 if trust_region_radius < opt_cfg.min_trust_region_radius:
                     converged_this_penalty = True
                     break
 
+            if converged:
+                break
+
             current_metrics = self.evaluate_true_metrics(current, penalty_coeff)
-            if current_metrics["constraint_violation"] <= opt_cfg.constraint_tolerance:
+            if (
+                current_metrics["constraint_violation"] <= opt_cfg.constraint_tolerance
+                and not current_metrics["has_segment_collision"]
+            ):
                 status = "converged_constraint_tolerance"
                 break
 
@@ -276,13 +304,21 @@ class TrajOptOptimizer:
 
         final_csv = self.logger.iteration_csv_path(accepted_iteration)
         final_metrics = self.evaluate_true_metrics(current, penalty_coeff)
+        final_has_segment_collision = final_metrics["has_segment_collision"]
+        final_colliding_segments = list(final_metrics["colliding_segments"])
+
+        if status == "converged_constraint_tolerance" and final_has_segment_collision:
+            status = "converged_sampled_only_but_exact_segment_collision"
 
         return OptimizationResult(
             status=status,
             iterations=overall_iteration,
             final_objective=final_metrics["objective"],
-            final_min_signed_distance=final_metrics["min_signed_distance"],
-            final_max_penetration_depth=final_metrics["max_penetration_depth"],
+            final_sampled_min_signed_distance=final_metrics["sampled_min_signed_distance"],
+            final_sampled_max_penetration_depth=final_metrics["sampled_max_penetration_depth"],
+            final_sampled_collision_penalty=final_metrics["sampled_collision_penalty"],
             final_smoothness_cost=final_metrics["smoothness_cost"],
+            final_has_segment_collision=final_has_segment_collision,
+            final_colliding_segments=final_colliding_segments,
             final_trajectory_csv=final_csv,
         )
