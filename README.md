@@ -17,6 +17,8 @@ The implementation is intentionally simple:
 ```bash
 python scripts/run_point2d_demo.py --config config/point2d_box.yaml --output results/point2d_box
 python scripts/plot_point2d_result.py --result results/point2d_box
+python scripts/run_planar_arm_demo.py --config config/planar_arm_box.yaml --output results/planar_arm_box
+python scripts/plot_planar_arm_result.py --result results/planar_arm_box
 ```
 
 ## Problem Setup
@@ -263,7 +265,7 @@ To make the experiment meaningful, the default seed is still infeasible but slig
 - `seed_type = offset_straight`
 - `seed_y_offset = 0.1`
 
-This produces a nearly straight path that still penetrates the obstacle, but does not pass perfectly through the box centerline.
+This produces a nearly straight path that still penetrates the obstacle, but does not pass perfectly through the box centerline. The parser default is `seed_y_offset = 0.1`, while the shipped demo config uses a larger offset so the example remains visibly infeasible and numerically well-behaved.
 
 The optimizer still has to solve the problem through collision costs, trust-region updates, and penalty logic. The default is **not** a pre-bent obstacle-avoiding detour.
 
@@ -332,3 +334,132 @@ The demo writes:
 - `plot.png`
 
 `metrics.csv` records sampled collision metrics and exact segment-collision indicators for every saved optimizer iteration.
+
+## From p-space to q-space
+
+The point-robot demo is useful for validating the optimization machinery:
+
+- sequential convex optimization
+- hinge collision penalties
+- trust-region updates
+- waypoint and segment collision sampling
+- exact final box-segment validation
+
+But the real TrajOpt idea is not to optimize workspace points directly. Instead, it optimizes robot configuration trajectories:
+
+```text
+q_i in R^n
+```
+
+For a Franka arm, that eventually means:
+
+```text
+q_i in R^7
+```
+
+The planar 2-link arm demo is the next algorithmic stepping stone.
+
+### Current p-space Demo
+
+The current point2d demo optimizes workspace waypoints directly:
+
+```text
+p_i = [x_i, y_i]
+```
+
+So the optimization variable already lives in the same space where collision distances are evaluated.
+
+### New q-space Planar Arm Demo
+
+The planar arm demo instead optimizes joint angles:
+
+```text
+q_i = [theta_1, theta_2]
+```
+
+Workspace geometry is obtained through forward kinematics:
+
+- base position
+- elbow position
+- wrist / end-effector position
+- two link segments in workspace
+
+Collision distances are evaluated in workspace, but the optimizer variable is in joint space.
+
+That means the collision gradient must be mapped back into q-space through the Jacobian.
+
+### Q-space Objective
+
+For the planar arm, the optimization variable is:
+
+```text
+Q = [q_0, q_1, ..., q_N],   q_i in R^2
+```
+
+and the objective is:
+
+```text
+min_Q  w_smooth * sum_i ||q_{i+1} - q_i||^2
+       + w_collision * sum_j hinge(margin + link_radius - sdf(x_j(q)))
+```
+
+where:
+
+- `q_i` are joint angles
+- `x_j(q)` are sampled points on robot links in workspace
+- `sdf(.)` is the box signed distance
+- `link_radius` models link thickness conservatively
+
+### Q-space Linearization
+
+For a sampled workspace point on the robot:
+
+```text
+x_current = x(q_current)
+```
+
+the signed distance is linearized as:
+
+```text
+sdf(x(q)) approx sdf(x(q0)) + grad_sdf(x(q0))^T J(q0) (q - q0)
+```
+
+where:
+
+- `grad_sdf(x(q0))` is the workspace collision normal
+- `J(q0)` is the Jacobian of that sampled link point with respect to joint angles
+
+This is the key TrajOpt step that is missing from a pure p-space demo.
+
+### Segment Samples In Q-space
+
+The planar arm demo also adds continuous-time-like trajectory samples between q waypoints:
+
+```text
+q_alpha = (1 - alpha) q_i + alpha q_{i+1}
+```
+
+At each `q_alpha`, link points are recomputed through FK, and the same Jacobian-mapped signed-distance linearization is used.
+
+### Why This Matters
+
+This is exactly the conceptual bridge to TrajOpt / Tesseract TrajOpt:
+
+- original TrajOpt optimizes robot configuration trajectories `q`
+- robot geometry lives in workspace
+- collision distances come from robot geometry vs environment
+- collision gradients are workspace contact normals mapped through robot Jacobians
+
+The planar 2-link arm example is a small, readable q-space milestone before introducing Franka, URDF parsing, or physics simulation.
+
+### Conservative Link Sampling
+
+The planar arm collision model uses sampled points along each link rather than an exact analytic link-segment distance inside the optimizer.
+
+To make that sampled model conservative, the optimizer uses:
+
+- multiple link sample alphas along each link
+- sampled intermediate `q_alpha` states between waypoints
+- a small discretization safety buffer based on the largest gap between adjacent link samples
+
+This means the optimization target is slightly more conservative than the final exact inflated-box link validation, which helps sampled link-point penalties produce a collision-free final path.

@@ -30,6 +30,9 @@ class AxisAlignedBox2D:
     def max_corner(self) -> np.ndarray:
         return self.center_array + self.half_extents
 
+    def inflated(self, padding: float) -> "AxisAlignedBox2D":
+        return AxisAlignedBox2D(center=list(self.center_array), size=list(self.size_array + 2.0 * padding))
+
     def signed_distance(self, point: np.ndarray) -> float:
         sdf, _ = self.signed_distance_with_gradient(point)
         return float(sdf)

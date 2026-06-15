@@ -9,12 +9,13 @@ import yaml
 
 
 class ResultLogger:
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, trajectory_column_names: list[str] | None = None) -> None:
         self.output_dir = Path(output_dir)
         self.iteration_dir = self.output_dir / "iterations"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.iteration_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_path = self.output_dir / "metrics.csv"
+        self.trajectory_column_names = trajectory_column_names
 
         if self.metrics_path.exists():
             self.metrics_path.unlink()
@@ -72,11 +73,24 @@ class ResultLogger:
 
     def _write_trajectory(self, iteration: int, trajectory: np.ndarray) -> None:
         path = self.iteration_csv_path(iteration)
+        dim = int(trajectory.shape[1])
+        if self.trajectory_column_names is None:
+            if dim == 2:
+                value_columns = ["x", "y"]
+            else:
+                value_columns = [f"v{idx}" for idx in range(dim)]
+        else:
+            value_columns = self.trajectory_column_names
+            if len(value_columns) != dim:
+                raise ValueError(
+                    f"trajectory_column_names length {len(value_columns)} does not match trajectory dim {dim}"
+                )
+
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["waypoint", "x", "y"])
+            writer.writerow(["waypoint", *value_columns])
             for idx, point in enumerate(trajectory):
-                writer.writerow([idx, float(point[0]), float(point[1])])
+                writer.writerow([idx, *[float(value) for value in point]])
 
     def _append_metrics(
         self,

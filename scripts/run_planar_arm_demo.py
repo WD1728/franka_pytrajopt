@@ -1,0 +1,75 @@
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from franka_pytrajopt.logging.logger import ResultLogger
+from franka_pytrajopt.robot.planar_arm import PlanarArm2D
+from franka_pytrajopt.trajopt.planar_arm_optimizer import PlanarArmTrajectoryOptimizer
+from franka_pytrajopt.trajopt.problem import PlanarArmConfig
+from franka_pytrajopt.world.box2d import AxisAlignedBox2D
+
+
+def load_config(path: Path) -> PlanarArmConfig:
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    return PlanarArmConfig.from_dict(data)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the planar 2-link arm TrajOpt demo.")
+    parser.add_argument("--config", type=Path, required=True, help="Path to YAML config file.")
+    parser.add_argument("--output", type=Path, required=True, help="Output result directory.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config(args.config)
+    arm = PlanarArm2D(
+        link_lengths=config.robot.link_lengths,
+        link_radius=config.robot.link_radius,
+        base=config.robot.base,
+    )
+    obstacle = AxisAlignedBox2D(center=config.obstacle.center, size=config.obstacle.size)
+
+    logger = ResultLogger(args.output, trajectory_column_names=["q1", "q2"])
+    logger.save_config(config.to_dict())
+
+    optimizer = PlanarArmTrajectoryOptimizer(config=config, arm=arm, obstacle=obstacle, logger=logger)
+    result = optimizer.optimize()
+
+    summary = {
+        "status": result.status,
+        "iterations": result.iterations,
+        "final_objective": result.final_objective,
+        "final_sampled_min_signed_distance": result.final_sampled_min_signed_distance,
+        "final_sampled_max_penetration_depth": result.final_sampled_max_penetration_depth,
+        "final_sampled_collision_penalty": result.final_sampled_collision_penalty,
+        "final_smoothness_cost": result.final_smoothness_cost,
+        "final_has_link_collision": result.final_has_link_collision,
+        "final_colliding_waypoints": result.final_colliding_waypoints,
+        "final_colliding_segments": result.final_colliding_segments,
+        "final_trajectory_csv": str(result.final_trajectory_csv),
+    }
+    logger.save_summary(summary)
+
+    config_copy = args.output / "config_used.yaml"
+    shutil.copyfile(args.config, config_copy)
+
+    print(json.dumps(summary, indent=2))
+    print(f"Results written to: {args.output}")
+
+
+if __name__ == "__main__":
+    main()
